@@ -8,7 +8,6 @@ int main (int argc, char *argv[])
     int chunk = 10;
     double mat[N][N], vect[N], result[N];
     int i, j;
-    int sum = 0;
     //Init Matrix
     for (i=0; i<N; i++)
 	for (j = 0; j<N; j++)
@@ -22,7 +21,7 @@ int main (int argc, char *argv[])
     for (i = 0; i<N; i++)
 	result[i] = 0.0;
 
-#pragma omp parallel shared(sum)
+#pragma omp parallel
     {
 #pragma omp for schedule(dynamic, chunk)
 	for (i=0; i<N; i++)
