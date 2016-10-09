@@ -13,7 +13,7 @@ typedef struct {
 MPI_Datatype create_mpi_pars_type();
 int main (int argc, char *argv[])
 {
-    int myid, numprocs, left, right;
+    int myid, numprocs, rankp2, rankm2;
     Pars buffer, buffer2;
     MPI_Request request;
     MPI_Status status;
@@ -23,10 +23,10 @@ int main (int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 
-    right = (myid + 2) % numprocs;
-    left = (myid - 2);
-    if (left < 0)
-	left = numprocs + left;
+    rankp2 = (myid + 2) % numprocs;
+    rankm2 = (myid - 2);
+    if (rankm2 < 0)
+	rankm2 = numprocs + rankm2;
 
     //initiatize the send buffer
     buffer.max_iter = myid;
@@ -40,8 +40,8 @@ int main (int argc, char *argv[])
     mpi_pars_type = create_mpi_pars_type();
     //Modify this
     //send myid to the left
-    MPI_Sendrecv(&buffer, 1, mpi_pars_type, left, 123,
-      &buffer2, 1, mpi_pars_type, right, 123, MPI_COMM_WORLD, &status);
+    MPI_Sendrecv(&buffer, 1, mpi_pars_type, rankp2, 123,
+      &buffer2, 1, mpi_pars_type, rankm2, 123, MPI_COMM_WORLD, &status);
 
     printf(" Process %d recieved %d\n", myid, buffer2.max_iter);
 
