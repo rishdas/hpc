@@ -3,6 +3,12 @@
 #include <stdlib.h>
 #include <limits.h>
 
+/*Reffered Code*/
+/*http://csweb.cs.wfu.edu/bigiron/LittleFE-PSRS/build/html/PSRSimplementation.html*/
+/*But the implemntation below is my own. The above code is in C++ my implementation is C*/
+/*I have also added my own code(from previous courses) to merging k sorted lists using heap*/
+/*https://github.com/rishdas/algo/blob/master/cormen/unit_3_advance_data_structures/merge_k_sorted_lists.c*/
+
 typedef struct node_ {
     int key;
     int value;
