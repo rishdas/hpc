@@ -3,6 +3,10 @@
 #include <math.h>
 #include <stdio.h>
 
+/*Reffered Code*/
+/*https://www.dartmouth.edu/~rc/classes/intro_mpi/Numerical_integration_example.html*/
+/*But the implemntation below is my own*/
+
 float func(float x)
 {
     return cos(x)*sin(x/2);
