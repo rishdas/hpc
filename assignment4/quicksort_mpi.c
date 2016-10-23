@@ -144,7 +144,7 @@ void fill_array(int **arr, int N, int num_procs);
 int cmpfunc(const void *a, const void *b);
 int main (int argc, char *argv[])
 {
-    const int N = 64;
+    const int N = 6400000;
     int rank, num_procs;
     int *arr = NULL;
     int *s_disp = NULL;
@@ -177,11 +177,10 @@ int main (int argc, char *argv[])
 	fill_array(&arr, N, num_procs);
     }
     for (int i = 1; (rank == root) && i<N ;i++) {
-	/* if (arr[i] < arr[i-1]) { */
-	/*     printf("Not Sorted\n"); */
-	/*     break; */
-	/* } */
-	printf("%d\n", arr[i]);
+	if (arr[i] < arr[i-1]) {
+	    printf("Not Sorted\n");
+	    break;
+	}
     }
     if (rank == root) {
 	MPI_Scatterv(arr, s_count, s_disp, MPI_INT, MPI_IN_PLACE,
@@ -191,19 +190,9 @@ int main (int argc, char *argv[])
 		     s_count[rank], MPI_INT, root, MPI_COMM_WORLD);
     }
     qsort(arr, s_count[rank], sizeof(int), cmpfunc);
-    /* if (rank == 1) { */
-    /* 	for (int i = 0; i<s_count[rank]; i++) { */
-    /* 	    printf("Rank: %d Data: %d\n", rank, arr[i]); */
-    /* 	} */
-    /* } */
     for(int i=0;i<num_procs;i++) {
 	pivot_buf[i]= arr[i*s_count[rank]/num_procs];
     }
-    /* if (rank == 1) { */
-    /* 	for (int i = 0; i<num_procs; i++) { */
-    /* 	    printf("Rank: %d Data: %d\n", rank, pivot_buf[i]); */
-    /* 	} */
-    /* } */
     if(rank == root) {
 	MPI_Gather(MPI_IN_PLACE, num_procs, MPI_INT,
 		   pivot_buf, num_procs, MPI_INT, root, MPI_COMM_WORLD);
@@ -211,7 +200,6 @@ int main (int argc, char *argv[])
 	MPI_Gather(pivot_buf, num_procs, MPI_INT,
 		   pivot_buf, num_procs, MPI_INT, root, MPI_COMM_WORLD);
     }
-
     if (rank == root) {
 	heap_t *hp = malloc(num_procs*sizeof(heap_t));
 	int l2;
@@ -223,18 +211,13 @@ int main (int argc, char *argv[])
 	    pivot_buf[i] = temp_buf[(i+1)*num_procs];
 	}
     }
-    if (rank == root) {
-    	for (int i = 0; i<num_procs*num_procs; i++) {
-    	    printf("Rank: %d Data: %d\n", rank, pivot_buf[i]);
-    	}
-    }
     MPI_Bcast(pivot_buf, num_procs-1, MPI_INT, root, MPI_COMM_WORLD);
     alloc_array(&s_res_len, num_procs);
     alloc_array(&s_res_start, num_procs);
     int k = 0;
     for (int i = 0; i<num_procs-1; i++) {
-	s_res_len[i] = k;
-	s_res_start[i] = 0;
+	s_res_start[i] = k;
+	s_res_len[i] = 0;
 
 	while ((k < s_count[rank]) && (arr[k] <= pivot_buf[i])) {
 	    s_res_len[i]++;
@@ -253,8 +236,8 @@ int main (int argc, char *argv[])
 		   r_len, 1, MPI_INT, i, MPI_COMM_WORLD);
 	if (rank == i) {
 	    r_start[0] = 0;
-	    for (int j = 0; j < num_procs; j++) {
-		r_start[j] = r_start[j] + r_len[j-1];
+	    for (int j = 1; j < num_procs; j++) {
+		r_start[j] = r_start[j-1] + r_len[j-1];
 	    }
 	}
 	MPI_Gatherv(&arr[s_res_start[i]],
@@ -288,15 +271,11 @@ int main (int argc, char *argv[])
 		res, send_lens, send_starts, MPI_INT, root, MPI_COMM_WORLD);
 
     MPI_Finalize();
-    if (rank == root) {
-	printf("\n\n");
-    }
     for (int i = 0; (rank == root) && i<N ;i++) {
-	/* if (res[i] < res[i-1]) { */
-	/*     printf("Not Sorted\n"); */
-	/*     return 0; */
-	/* } */
-	printf("%d\n", res[i]);
+	if (res[i] < res[i-1]) {
+	    printf("Not Sorted\n");
+	    return 0;
+	}
     }
     if (rank == root) {
 	printf("Sorted\n");
