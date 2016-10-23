@@ -2,6 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/*Reffrered code:*/
+/*https://computing.llnl.gov/tutorials/mpi/samples/C/mpi_pi_reduce.c*/
+/*But the implemntation below is my own*/
+
 double square(double x)
 {
     return x*x;
