@@ -1,12 +1,14 @@
 #include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
+#include <float.h>
 
 #define NXPROB      20                 /* x dimension of problem grid */
 #define NYPROB      20                 /* y dimension of problem grid */
 #define COLS 20
 #define ROWS 20
-#define STEPS       100                /* number of time steps */
+#define STEPS       1000                /* number of time steps */
 #define MAXWORKER   8                  /* maximum number of worker tasks */
 #define MINWORKER   3                  /* minimum number of worker tasks */
 #define BEGIN       1                  /* message tag */
@@ -15,6 +17,7 @@
 #define NONE        0                  /* indicates no neighbor */
 #define DONE        4                  /* message tag */
 #define ROOT        0                  /* taskid of first process */
+#define EPS        1e-3
 #define I_FIX 5
 #define J_FIX 5
 #define TEMP 50.
@@ -51,10 +54,16 @@ void compute_new_values(double** old_matrix, double** new_matrix,
                             old_matrix[i][j-1] + old_matrix[i][j+1]);
     new_matrix[I_FIX][J_FIX] = TEMP;
 }
+void print_matrix(double** matrix) {
+    for (int i = 0; i < ROWS; i++) {
+        for (int j = 0; j < COLS; j++)
+            printf("%f ", matrix[i][j]);
+        printf("\n");
+    }
+}
 int main (int argc, char *argv[])
 {
     void inidat(), prtdat(), update();
-    double  u[2][NXPROB][NYPROB];        /* array for grid */
     int	taskid,                     /* this task's unique id */
 	numworkers,                 /* number of worker processes */
 	numtasks,                   /* number of tasks */
@@ -91,12 +100,9 @@ int main (int argc, char *argv[])
 	printf ("Starting mpi_heat2D with %d worker tasks.\n", numworkers);
 
 	/* Initialize grid */
-	printf("Grid size: X= %d  Y= %d  Time steps= %d\n",NXPROB,NYPROB,STEPS);
-	printf("Initializing grid and writing initial.dat file...\n");
-	inidat(NXPROB, NYPROB, u);
-	prtdat(NXPROB, NYPROB, u, "initial.dat");
 	init_matrix(a_old, taskid); //initialize the matrices
 	init_matrix(a_new, taskid);
+	print_matrix(a_new);
 
 
 	/* Distribute work to workers.  Must first figure out how many rows to */
@@ -142,10 +148,7 @@ int main (int argc, char *argv[])
 	}
 
 	/* Write final output, call X graph and finalize MPI */
-	printf("Writing final.dat file and generating graph...\n");
-	prtdat(NXPROB, NYPROB, &a_new[0][0], "final.dat");
-	printf("Click on MORE button to view initial/final states.\n");
-	printf("Click on EXIT button to quit program.\n");
+	print_matrix(a_new);
 	MPI_Finalize();
     }   /* End of master code */
 
@@ -154,12 +157,6 @@ int main (int argc, char *argv[])
     /************************* workers code **********************************/
     if (taskid != ROOT) 
     {
-	/* Initialize everything - including the borders - to zero */
-	for (iz=0; iz<2; iz++)
-	    for (ix=0; ix<NXPROB; ix++) 
-		for (iy=0; iy<NYPROB; iy++) 
-		    u[iz][ix][iy] = 0.0;
-
 	/* Receive my offset, rows, neighbors and grid partition from master */
 	source = ROOT;
 	msgtype = BEGIN;
