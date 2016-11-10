@@ -1,36 +1,11 @@
-/****************************************************************************
- * FILE: mpi_heat2D.c
- * OTHER FILES: draw_heat.c  
- * DESCRIPTIONS:  
- *   HEAT2D Example - Parallelized C Version
- *   This example is based on a simplified two-dimensional heat 
- *   equation domain decomposition.  The initial temperature is computed to be 
- *   high in the middle of the domain and zero at the boundaries.  The 
- *   boundaries are held at zero throughout the simulation.  During the 
- *   time-stepping, an array containing two domains is used; these domains 
- *   alternate between old data and new data.
- *
- *   In this parallelized version, the grid is decomposed by the master
- *   process and then distributed by rows to the worker processes.  At each 
- *   time step, worker processes must exchange border data with neighbors, 
- *   because a grid point's current temperature depends upon it's previous
- *   time step value plus the values of the neighboring grid points.  Upon
- *   completion of all time steps, the worker processes return their results
- *   to the master process.
- *
- *   Two data files are produced: an initial data set and a final data set.
- *   An X graphic of these two states displays after all calculations have
- *   completed.
- * AUTHOR: Blaise Barney - adapted from D. Turner's serial C version. Converted
- *   to MPI: George L. Gusciora (1/95)
- * LAST REVISED: 06/12/13 Blaise Barney
- ****************************************************************************/
 #include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 #define NXPROB      20                 /* x dimension of problem grid */
 #define NYPROB      20                 /* y dimension of problem grid */
+#define COLS 20
+#define ROWS 20
 #define STEPS       100                /* number of time steps */
 #define MAXWORKER   8                  /* maximum number of worker tasks */
 #define MINWORKER   3                  /* minimum number of worker tasks */
@@ -39,11 +14,43 @@
 #define RTAG        3                  /* message tag */
 #define NONE        0                  /* indicates no neighbor */
 #define DONE        4                  /* message tag */
-#define MASTER      0                  /* taskid of first process */
+#define ROOT        0                  /* taskid of first process */
 #define I_FIX 5
 #define J_FIX 5
 #define TEMP 50.
 
+double** alloc_matrix(){
+    double** matrix;
+    matrix = (double**) malloc(ROWS * sizeof(double *));
+    matrix[0] = (double*) malloc(ROWS * COLS * sizeof(double));
+    for (int i = 1; i < ROWS; i++)
+        matrix[i] = matrix[0] + i*COLS;
+    return matrix;
+}
+void init_matrix(double** matrix, int rank){
+    for (int i = 0; i < ROWS; i++)
+        for (int j = 0; j < COLS; j++) {
+            matrix[i][j] = 0.;
+        }
+    if (rank == ROOT) {
+	matrix[I_FIX][J_FIX] = TEMP;
+    }
+}
+void copy_matrix(double** dest, double** source,
+		 int start, int end) {
+    for (int i = start; i <= end; i++)
+        for (int j = 0; j < COLS; j++)
+            dest[i][j] = source[i][j];
+}
+void compute_new_values(double** old_matrix, double** new_matrix,
+			int start, int end){
+    for (int i = start; i <= end; i++)
+        for (int j= 1; j < COLS-1; j++)
+            new_matrix[i][j] =
+                    0.25 * (old_matrix[i-1][j] + old_matrix[i+1][j] +
+                            old_matrix[i][j-1] + old_matrix[i][j+1]);
+    new_matrix[I_FIX][J_FIX] = TEMP;
+}
 int main (int argc, char *argv[])
 {
     void inidat(), prtdat(), update();
@@ -58,8 +65,8 @@ int main (int argc, char *argv[])
 	rc,start,end,               /* misc */
 	i,ix,iy,iz,it;              /* loop variables */
     MPI_Status status;
-    /* double **a_old = alloc_matrix(); //allocate memory for the matrices */
-    /* double **a_new = alloc_matrix(); */
+    double **a_old = alloc_matrix(); //allocate memory for the matrices
+    double **a_new = alloc_matrix();
 
 
 /* First, find out my taskid and how many tasks are running */
@@ -68,7 +75,10 @@ int main (int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD,&taskid);
     numworkers = numtasks-1;
 
-    if (taskid == MASTER) {
+    init_matrix(a_old, taskid); //initialize the matrices
+    init_matrix(a_new, taskid);
+
+    if (taskid == ROOT) {
 	/************************* master code *******************************/
 	/* Check if numworkers is within range - quit if not */
 	if ((numworkers > MAXWORKER) || (numworkers < MINWORKER)) {
@@ -85,6 +95,9 @@ int main (int argc, char *argv[])
 	printf("Initializing grid and writing initial.dat file...\n");
 	inidat(NXPROB, NYPROB, u);
 	prtdat(NXPROB, NYPROB, u, "initial.dat");
+	init_matrix(a_old, taskid); //initialize the matrices
+	init_matrix(a_new, taskid);
+
 
 	/* Distribute work to workers.  Must first figure out how many rows to */
 	/* send and what to do with extra rows.  */
@@ -110,7 +123,7 @@ int main (int argc, char *argv[])
 	    MPI_Send(&rows, 1, MPI_INT, dest, BEGIN, MPI_COMM_WORLD);
 	    MPI_Send(&left, 1, MPI_INT, dest, BEGIN, MPI_COMM_WORLD);
 	    MPI_Send(&right, 1, MPI_INT, dest, BEGIN, MPI_COMM_WORLD);
-	    MPI_Send(&u[0][offset][0], rows*NYPROB, MPI_DOUBLE, dest, BEGIN, 
+	    MPI_Send(&a_new[offset][0], rows*NYPROB, MPI_DOUBLE, dest, BEGIN, 
 		     MPI_COMM_WORLD);
 	    printf("Sent to task %d: rows= %d offset= %d ",dest,rows,offset);
 	    printf("left= %d right= %d\n",left,right);
@@ -124,13 +137,13 @@ int main (int argc, char *argv[])
 	    MPI_Recv(&offset, 1, MPI_INT, source, msgtype, MPI_COMM_WORLD, 
 		     &status);
 	    MPI_Recv(&rows, 1, MPI_INT, source, msgtype, MPI_COMM_WORLD, &status);
-	    MPI_Recv(&u[0][offset][0], rows*NYPROB, MPI_DOUBLE, source,
+	    MPI_Recv(&a_new[offset][0], rows*NYPROB, MPI_DOUBLE, source,
 		     msgtype, MPI_COMM_WORLD, &status);
 	}
 
 	/* Write final output, call X graph and finalize MPI */
 	printf("Writing final.dat file and generating graph...\n");
-	prtdat(NXPROB, NYPROB, &u[0][0][0], "final.dat");
+	prtdat(NXPROB, NYPROB, &a_new[0][0], "final.dat");
 	printf("Click on MORE button to view initial/final states.\n");
 	printf("Click on EXIT button to quit program.\n");
 	MPI_Finalize();
@@ -139,7 +152,7 @@ int main (int argc, char *argv[])
 
 
     /************************* workers code **********************************/
-    if (taskid != MASTER) 
+    if (taskid != ROOT) 
     {
 	/* Initialize everything - including the borders - to zero */
 	for (iz=0; iz<2; iz++)
@@ -148,13 +161,13 @@ int main (int argc, char *argv[])
 		    u[iz][ix][iy] = 0.0;
 
 	/* Receive my offset, rows, neighbors and grid partition from master */
-	source = MASTER;
+	source = ROOT;
 	msgtype = BEGIN;
 	MPI_Recv(&offset, 1, MPI_INT, source, msgtype, MPI_COMM_WORLD, &status);
 	MPI_Recv(&rows, 1, MPI_INT, source, msgtype, MPI_COMM_WORLD, &status);
 	MPI_Recv(&left, 1, MPI_INT, source, msgtype, MPI_COMM_WORLD, &status);
 	MPI_Recv(&right, 1, MPI_INT, source, msgtype, MPI_COMM_WORLD, &status);
-	MPI_Recv(&u[0][offset][0], rows*NYPROB, MPI_DOUBLE, source, msgtype, 
+	MPI_Recv(&a_new[offset][0], rows*NYPROB, MPI_DOUBLE, source, msgtype, 
 		 MPI_COMM_WORLD, &status);
 
 	/* Determine border elements.  Need to consider first and last columns. */
@@ -172,35 +185,38 @@ int main (int argc, char *argv[])
 	/* neighbors.  If I have the first or last grid row, then I only need */
 	/*  to  communicate with one neighbor  */
 	printf("Task %d received work. Beginning time steps...\n",taskid);
-	iz = 0;
 	for (it = 1; it <= STEPS; it++)
 	{
 	    if (left != NONE)
 	    {
-		MPI_Send(&u[iz][offset][0], NYPROB, MPI_DOUBLE, left,
+		MPI_Send(&a_new[offset][0], NYPROB, MPI_DOUBLE, left,
 			 RTAG, MPI_COMM_WORLD);
 		source = left;
 		msgtype = LTAG;
-		MPI_Recv(&u[iz][offset-1][0], NYPROB, MPI_DOUBLE, source,
+		MPI_Recv(&a_new[offset-1][0], NYPROB, MPI_DOUBLE, source,
 			 msgtype, MPI_COMM_WORLD, &status);
 	    }
 	    if (right != NONE)
 	    {
-		MPI_Send(&u[iz][offset+rows-1][0], NYPROB, MPI_DOUBLE, right,
+		MPI_Send(&a_new[offset+rows-1][0], NYPROB, MPI_DOUBLE, right,
 			 LTAG, MPI_COMM_WORLD);
 		source = right;
 		msgtype = RTAG;
-		MPI_Recv(&u[iz][offset+rows][0], NYPROB, MPI_DOUBLE, source, msgtype,
-			 MPI_COMM_WORLD, &status);
+		MPI_Recv(&a_new[offset+rows][0], NYPROB, MPI_DOUBLE,
+			 source, msgtype, MPI_COMM_WORLD, &status);
+	    }
+	    if (it == 1) {
+		copy_matrix(a_old, a_new, start, end);
 	    }
 	    /* Now call update to update the value of grid points */
-	    update(start,end,NYPROB,&u[iz][0][0],&u[1-iz][0][0]);
-	    iz = 1 - iz;
+	    //update(start,end,NYPROB,&a_new[0][0],&a_old[0][0]);
+	    compute_new_values(a_old, a_new, start, end);
+	    copy_matrix(a_old, a_new, start, end);
 	}
 	/* Finally, send my portion of final results back to master */
-	MPI_Send(&offset, 1, MPI_INT, MASTER, DONE, MPI_COMM_WORLD);
-	MPI_Send(&rows, 1, MPI_INT, MASTER, DONE, MPI_COMM_WORLD);
-	MPI_Send(&u[iz][offset][0], rows*NYPROB, MPI_DOUBLE, MASTER, DONE, 
+	MPI_Send(&offset, 1, MPI_INT, ROOT, DONE, MPI_COMM_WORLD);
+	MPI_Send(&rows, 1, MPI_INT, ROOT, DONE, MPI_COMM_WORLD);
+	MPI_Send(&a_new[offset][0], rows*NYPROB, MPI_DOUBLE, ROOT, DONE, 
 		 MPI_COMM_WORLD);
 	MPI_Finalize();
     }
