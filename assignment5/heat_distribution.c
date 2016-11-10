@@ -3,11 +3,11 @@
 #include <math.h>
 #include <float.h>
 
-#define COLS 10
-#define ROWS 10
+#define COLS 12
+#define ROWS 12
 #define TEMP 50.
 #define DEBUG 1
-#define EPS 1e-6
+#define EPS 1e-3
 #define I_FIX 5
 #define J_FIX 5
 
