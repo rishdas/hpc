@@ -8,7 +8,7 @@
 #define NYPROB      20                 /* y dimension of problem grid */
 #define COLS 20
 #define ROWS 20
-#define STEPS       1000                /* number of time steps */
+#define STEPS       100                /* number of time steps */
 #define MAXWORKER   8                  /* maximum number of worker tasks */
 #define MINWORKER   3                  /* minimum number of worker tasks */
 #define BEGIN       1                  /* message tag */
@@ -16,10 +16,11 @@
 #define RTAG        3                  /* message tag */
 #define NONE        0                  /* indicates no neighbor */
 #define DONE        4                  /* message tag */
+#define NOTDONE     5                  /* message tag */
 #define ROOT        0                  /* taskid of first process */
-#define EPS        1e-3
-#define I_FIX 5
-#define J_FIX 5
+#define EPS         1e-3
+#define I_FIX 10
+#define J_FIX 10
 #define TEMP 50.
 
 double** alloc_matrix(){
@@ -45,14 +46,20 @@ void copy_matrix(double** dest, double** source,
         for (int j = 0; j < COLS; j++)
             dest[i][j] = source[i][j];
 }
-void compute_new_values(double** old_matrix, double** new_matrix,
+double compute_new_values(double** old_matrix, double** new_matrix,
 			int start, int end){
+    double max_val = DBL_MIN;
     for (int i = start; i <= end; i++)
-        for (int j= 1; j < COLS-1; j++)
+        for (int j= 1; j < COLS-1; j++) {
             new_matrix[i][j] =
                     0.25 * (old_matrix[i-1][j] + old_matrix[i+1][j] +
                             old_matrix[i][j-1] + old_matrix[i][j+1]);
+	    if (fabs(new_matrix[i][j] - old_matrix[i][j]) > max_val) {
+                max_val = fabs(new_matrix[i][j] - old_matrix[i][j]);
+            }
+	}
     new_matrix[I_FIX][J_FIX] = TEMP;
+    return max_val;
 }
 void print_matrix(double** matrix) {
     for (int i = 0; i < ROWS; i++) {
@@ -60,6 +67,22 @@ void print_matrix(double** matrix) {
             printf("%f ", matrix[i][j]);
         printf("\n");
     }
+}
+void print_array(double** matrix, int row) {
+    for (int j = 0; j < COLS; j++)
+	printf("%f ", matrix[row][j]);
+    printf("\n");
+}
+double max_abs(double** m1, double** m2,
+	       int start, int end){
+    double max_val = DBL_MIN;
+    for (int i = start; i <= end; i++)
+        for (int j = 0; j < COLS; j++){
+            if (fabs(m1[i][j] - m2[i][j]) > max_val) {
+                max_val = fabs(m1[i][j] - m2[i][j]);
+            }
+        }
+    return max_val;
 }
 int main (int argc, char *argv[])
 {
@@ -76,6 +99,7 @@ int main (int argc, char *argv[])
     MPI_Status status;
     double **a_old = alloc_matrix(); //allocate memory for the matrices
     double **a_new = alloc_matrix();
+    int    dummy;
 
 
 /* First, find out my taskid and how many tasks are running */
@@ -100,10 +124,10 @@ int main (int argc, char *argv[])
 	printf ("Starting mpi_heat2D with %d worker tasks.\n", numworkers);
 
 	/* Initialize grid */
+	printf("Grid size: X= %d  Y= %d  Time steps= %d\n",NXPROB,NYPROB,STEPS);
 	init_matrix(a_old, taskid); //initialize the matrices
 	init_matrix(a_new, taskid);
 	print_matrix(a_new);
-
 
 	/* Distribute work to workers.  Must first figure out how many rows to */
 	/* send and what to do with extra rows.  */
@@ -135,6 +159,7 @@ int main (int argc, char *argv[])
 	    printf("left= %d right= %d\n",left,right);
 	    offset = offset + rows;
 	}
+	copy_matrix(a_old, a_new, 0, ROWS-1);
 	/* Now wait for results from all worker tasks */
 	for (i=1; i<=numworkers; i++)
 	{
@@ -145,10 +170,11 @@ int main (int argc, char *argv[])
 	    MPI_Recv(&rows, 1, MPI_INT, source, msgtype, MPI_COMM_WORLD, &status);
 	    MPI_Recv(&a_new[offset][0], rows*NYPROB, MPI_DOUBLE, source,
 		     msgtype, MPI_COMM_WORLD, &status);
+	    printf("Recieving results from : %d\n", source);
 	}
 
 	/* Write final output, call X graph and finalize MPI */
-	print_matrix(a_new);
+	print_matrix(a_new);	
 	MPI_Finalize();
     }   /* End of master code */
 
@@ -182,8 +208,14 @@ int main (int argc, char *argv[])
 	/* neighbors.  If I have the first or last grid row, then I only need */
 	/*  to  communicate with one neighbor  */
 	printf("Task %d received work. Beginning time steps...\n",taskid);
-	for (it = 1; it <= STEPS; it++)
-	{
+	copy_matrix(a_old, a_new, start, end);
+	int ctr = 1;
+	double max_diff = 0.;
+	while (ctr < STEPS) {
+	    ctr++;
+	    /* printf("Task: %d: Iteration %d: max_diff: %f EPS: %f\n", */
+	    /* 	   taskid, ctr, max_diff, EPS); */
+
 	    if (left != NONE)
 	    {
 		MPI_Send(&a_new[offset][0], NYPROB, MPI_DOUBLE, left,
@@ -202,13 +234,13 @@ int main (int argc, char *argv[])
 		MPI_Recv(&a_new[offset+rows][0], NYPROB, MPI_DOUBLE,
 			 source, msgtype, MPI_COMM_WORLD, &status);
 	    }
-	    if (it == 1) {
-		copy_matrix(a_old, a_new, start, end);
-	    }
 	    /* Now call update to update the value of grid points */
 	    //update(start,end,NYPROB,&a_new[0][0],&a_old[0][0]);
-	    compute_new_values(a_old, a_new, start, end);
-	    copy_matrix(a_old, a_new, start, end);
+	    max_diff = compute_new_values(a_old, a_new, start, end);	    
+	    /* max_diff = max_abs(a_old, a_new, start, end); */
+	    /* if (max_diff < EPS) */
+	    /* 	break; */
+	    copy_matrix(a_old, a_new, start, end);	
 	}
 	/* Finally, send my portion of final results back to master */
 	MPI_Send(&offset, 1, MPI_INT, ROOT, DONE, MPI_COMM_WORLD);
