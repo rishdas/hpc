@@ -4,9 +4,9 @@
 #include <math.h>
 #include <float.h>
 
-#define COLS        20
-#define ROWS        20
-#define STEPS       100
+#define COLS        10000
+#define ROWS        10000
+#define STEPS       10000
 #define BEGIN       1
 #define LTAG        2
 #define RTAG        3
@@ -15,8 +15,8 @@
 #define NOTDONE     5
 #define ROOT        0
 #define EPS         1e-3
-#define I_FIX       10
-#define J_FIX       10
+#define I_FIX       5000
+#define J_FIX       5000
 #define TEMP        50.
 
 double** alloc_matrix() {
@@ -51,10 +51,9 @@ void copy_matrix(double** dest, double** source,
 	}
     }
 }
-double compute_new_values(double** old_matrix, double** new_matrix,
+void compute_new_values(double** old_matrix, double** new_matrix,
 			  int start, int end) {
     
-    double max_val = DBL_MIN;
     for (int i = start; i <= end; i++) {
 
 	for (int j= 1; j < COLS-1; j++) {
@@ -62,14 +61,10 @@ double compute_new_values(double** old_matrix, double** new_matrix,
 	    new_matrix[i][j] =
 		0.25 * (old_matrix[i-1][j] + old_matrix[i+1][j] +
 			old_matrix[i][j-1] + old_matrix[i][j+1]);
-	    if (fabs(new_matrix[i][j] - old_matrix[i][j]) > max_val) {
-                max_val = fabs(new_matrix[i][j] - old_matrix[i][j]);
-            }
 	}
     }
 
     new_matrix[I_FIX][J_FIX] = TEMP;
-    return max_val;
 }
 void print_matrix(double** matrix) {
     
@@ -101,25 +96,44 @@ double max_abs(double** m1, double** m2,
     }
     return max_val;
 }
+void printdat(int r, int c, double **mat, char *fnam) {
+    int i, j;
+    FILE *fp;
+
+    fp = fopen(fnam, "w");
+    for (i = I_FIX; i < (I_FIX+50); i++) {
+	for (j = J_FIX; j < (J_FIX+50); j++) {
+	    fprintf(fp, "%f", mat[i][j]);
+	    if (j != ((J_FIX+50)-1)) 
+		fprintf(fp, " ");
+	    else
+		fprintf(fp, "\n");
+	}
+    }
+    fclose(fp);
+}
 int main (int argc, char *argv[])
 {
-    double     **a_old = alloc_matrix();
-    double     **a_new = alloc_matrix();
-    int        no_of_procs;
-    int	       rank;
-    int        no_of_workers;
-    int        row_per_worker;
-    int        rows,offset,extra;
-    int        dest, source;
-    int        left,right;
-    int        msgtype;
-    int        start,end;
-    int        i;
-    int        task_done = 0;
-    int        all_done = 0;
-    int        ctr = 0;
-    double     max_diff = 0.;
-    MPI_Status status;
+    double      **a_old = alloc_matrix();
+    double      **a_new = alloc_matrix();
+    int         no_of_procs;
+    int	        rank;
+    int         no_of_workers;
+    int         row_per_worker;
+    int         rows,offset,extra;
+    int         dest, source;
+    int         left,right;
+    int         msgtype;
+    int         start,end;
+    int         i;
+    int         task_done = 0;
+    int         all_done = 0;
+    int         ctr = 0;
+    double      max_diff = 0.;
+    double      g_max_diff = 0.;
+    MPI_Status  status;
+    MPI_Request request;
+    MPI_Request srrequest;
 
     MPI_Init(&argc,&argv);
     MPI_Comm_size(MPI_COMM_WORLD,&no_of_procs);
@@ -132,7 +146,8 @@ int main (int argc, char *argv[])
 
 	init_matrix(a_old, rank);
 	init_matrix(a_new, rank);
-	print_matrix(a_new);
+//	print_matrix(a_new);
+	printdat(COLS, ROWS, a_old, "initial.dat");
 
 	offset = 0;
 		
@@ -168,6 +183,18 @@ int main (int argc, char *argv[])
 	    offset = offset + rows;
 	}
 	copy_matrix(a_old, a_new, 0, ROWS-1);
+	/* while(1) { */
+	/*     /\* printf("rank: %d maxdiff: %f g_max_diff: %f\n", *\/ */
+	/*     /\* 	   rank, max_diff, g_max_diff); *\/ */
+	/*     max_diff = 0; */
+	/*     MPI_Iallreduce(&max_diff, &g_max_diff, 1, */
+	/* 		   MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD, &srrequest); */
+	/*     ctr++; */
+	/*     if (ctr>STEPS && g_max_diff < EPS) { */
+	/* 	break; */
+	/*     } */
+	/*     MPI_Wait(&srrequest, &status); */
+	/* } */
 
 	for (i=1; i<=no_of_workers; i++) {
 	    source = i;
@@ -179,7 +206,8 @@ int main (int argc, char *argv[])
 		     msgtype, MPI_COMM_WORLD, &status);
 	    printf("Recieving results from : %d\n", source);
 	}
-	print_matrix(a_new);	
+	//print_matrix(a_new);
+	printdat(COLS, ROWS, a_new, "final.dat");
 	MPI_Finalize();
     }
     if (rank != ROOT) {
@@ -205,37 +233,41 @@ int main (int argc, char *argv[])
 	
 	printf("task=%d  start=%d  end=%d\n",rank,start,end);
 	printf("Task %d received work. Beginning time steps...\n",rank);
-
 	copy_matrix(a_old, a_new, start, end);
-	
-	while (ctr < STEPS) {
-	    if (left != NONE)
-	    {
-		MPI_Send(&a_new[offset][0], COLS, MPI_DOUBLE, left,
-			 RTAG, MPI_COMM_WORLD);
-		source = left;
-		msgtype = LTAG;
-		MPI_Recv(&a_new[offset-1][0], COLS, MPI_DOUBLE, source,
-			 msgtype, MPI_COMM_WORLD, &status);
-	    }
-	    if (right != NONE)
-	    {
-		MPI_Send(&a_new[offset+rows-1][0], COLS, MPI_DOUBLE, right,
-			 LTAG, MPI_COMM_WORLD);
+
+	while (1) {
+	    if (right != NONE) {
+		MPI_Isend(&a_old[offset+rows-1][0], COLS, MPI_DOUBLE, right,
+			  LTAG, MPI_COMM_WORLD, &srrequest);
 		source = right;
 		msgtype = RTAG;
-		MPI_Recv(&a_new[offset+rows][0], COLS, MPI_DOUBLE,
-			 source, msgtype, MPI_COMM_WORLD, &status);
+		MPI_Irecv(&a_old[offset+rows][0], COLS, MPI_DOUBLE,
+			  source, msgtype, MPI_COMM_WORLD, &srrequest);
 	    }
-	
-	    max_diff = compute_new_values(a_old, a_new, start, end);	    
-	    /* max_diff = max_abs(a_old, a_new, start, end); */
-	    if (max_diff < EPS) {
-		task_done = 1;	       
+
+	    if (left != NONE) {
+		MPI_Isend(&a_old[offset][0], COLS, MPI_DOUBLE, left,
+			  RTAG, MPI_COMM_WORLD, &srrequest);
+		source = left;
+		msgtype = LTAG;
+		MPI_Irecv(&a_old[offset-1][0], COLS, MPI_DOUBLE, source,
+			  msgtype, MPI_COMM_WORLD, &srrequest);
 	    }
-	    copy_matrix(a_old, a_new, start, end);
-	    //printf("rank: %d ALL DONE: %d\n", rank, all_done);
+
+	    MPI_Wait(&srrequest, &status);
+	    compute_new_values(a_old, a_new, start, end);	    
+	    max_diff = max_abs(a_old, a_new, start, end);
+	    //g_max_diff = max_diff;
+	    copy_matrix(a_old, a_new, start, end);	    
+	    printf("rank: %d maxdiff: %f g_max_diff: %f\n",
+		   rank, max_diff, g_max_diff);
+
 	    ctr++;
+	    if (ctr>STEPS) {// && g_max_diff < EPS) {
+		break;
+	    }
+	    MPI_Iallreduce(&max_diff, &g_max_diff, 1,
+			   MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD, &srrequest);
 	}
 	MPI_Send(&offset, 1, MPI_INT, ROOT, DONE, MPI_COMM_WORLD);
 	MPI_Send(&rows, 1, MPI_INT, ROOT, DONE, MPI_COMM_WORLD);
